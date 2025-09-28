@@ -93,6 +93,15 @@ export const getAllUsers = async () => {
   }
 }
 
+export const deleteUser = async (userId) => {
+  try {
+    await deleteDoc(doc(db, 'users', userId))
+  } catch (error) {
+    console.error('Error deleting user:', error)
+    throw error
+  }
+}
+
 // Blog Functions
 export const addBlog = async (blogData) => {
   try {

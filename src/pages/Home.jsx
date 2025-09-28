@@ -292,6 +292,8 @@ export default function Home() {
               onMouseEnter={(e) => {
                 e.target.style.transform = 'scale(1.05) translateY(-2px)'
                 e.target.style.boxShadow = '0 20px 40px rgba(102, 126, 234, 0.4)'
+
+                onclick = () => { window.location.href = '/projects'}
               }}
             >
               See My Work
