@@ -104,6 +104,25 @@ export default function AdminNavbar() {
         </Link>
         
         <Link 
+          style={getLinkStyle("/admin/service-management")} 
+          to="/admin/service-management"
+          onMouseEnter={(e) => {
+            if (location.pathname !== "/admin/service-management") {
+              e.target.style.background = "rgba(255, 255, 255, 0.15)"
+              e.target.style.color = "#fef2f2"
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (location.pathname !== "/admin/service-management") {
+              e.target.style.background = "transparent"
+              e.target.style.color = "#fecaca"
+            }
+          }}
+        >
+          🛠️ Services
+        </Link>
+        
+        <Link 
           style={getLinkStyle("/admin/add-project")} 
           to="/admin/add-project"
           onMouseEnter={(e) => {

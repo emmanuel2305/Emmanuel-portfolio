@@ -11,6 +11,7 @@ import AdminDashboard from "./pages/AdminDashboard.jsx"
 import AddProject from "./pages/AddProject.jsx"
 import AddBlog from "./pages/AddBlog.jsx"
 import Services from "./pages/Services.jsx"
+import ServiceManagement from "./pages/ServiceManagement.jsx"
 
 export default function App() {
   const location = useLocation()
@@ -32,6 +33,7 @@ export default function App() {
           
           {/* Admin Routes */}
           <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin/service-management" element={<ServiceManagement />} />
           <Route path="/admin/add-project" element={<AddProject />} />
           <Route path="/admin/add-blog" element={<AddBlog />} />
         </Routes>
