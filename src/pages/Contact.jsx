@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { addContactMessage } from '../services/firebaseService'
 import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from '../config/firebase'
+import emailjs from '@emailjs/browser'
 
 export default function Contact() {
   const [showElements, setShowElements] = useState(false)
@@ -18,8 +19,17 @@ export default function Contact() {
   const [user, setUser] = useState(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const particlesRef = useRef(null)
+  const formRef = useRef(null)
+
+  // EmailJS Configuration - Replace with your actual keys
+  const EMAILJS_SERVICE_ID = 'service_xo02mms'
+  const EMAILJS_TEMPLATE_ID = 'template_bcmiluw'
+  const EMAILJS_PUBLIC_KEY = 'QPgvlaI5SEHYyQMy9'
 
   useEffect(() => {
+    // Initialize EmailJS
+    emailjs.init(EMAILJS_PUBLIC_KEY)
+
     // Firebase Auth State Listener
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser)
@@ -138,7 +148,7 @@ export default function Contact() {
     }
 
     return () => {
-      unsubscribe() // Cleanup auth listener
+      unsubscribe()
       if (document.head.contains(link)) document.head.removeChild(link)
       if (document.head.contains(style)) document.head.removeChild(style)
     }
@@ -151,62 +161,14 @@ export default function Contact() {
       [name]: value
     }))
     
-    // Clear any error states when user starts typing
     if (submitStatus?.type === 'error') {
       setSubmitStatus(null)
     }
   }
 
-  const sendEmail = async (emailData) => {
+  const sendEmailViaEmailJS = async () => {
     try {
-      const response = await fetch('../api/send-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(emailData)
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.message || 'Failed to send email')
-      }
-
-      return await response.json()
-    } catch (error) {
-      console.error('Email API error:', error)
-      throw error
-    }
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    
-    // Validation
-    if (!formData.name.trim() || !formData.email.trim() || !formData.message.trim()) {
-      setSubmitStatus({
-        type: 'error',
-        message: 'Please fill in all required fields'
-      })
-      return
-    }
-
-    // Email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(formData.email)) {
-      setSubmitStatus({
-        type: 'error',
-        message: 'Please enter a valid email address'
-      })
-      return
-    }
-
-    setIsSubmitting(true)
-    setSubmitStatus(null)
-
-    try {
-      // Prepare email data
-      const emailData = {
+      const templateParams = {
         from_name: formData.name,
         from_email: formData.email,
         to_email: 'emmanuelnavaraj@gmail.com',
@@ -222,12 +184,82 @@ export default function Contact() {
           hour: '2-digit',
           minute: '2-digit'
         }),
-        reply_to: formData.email
+        reply_to: formData.email,
+        // Additional fields for the email template
+        urgency_emoji: formData.urgency === 'urgent' ? '🔴' : formData.urgency === 'high' ? '🟡' : '🟢',
+        website_url: window.location.origin
       }
 
-      // Send email via API
-      const emailResult = await sendEmail(emailData)
-      console.log('Email sent successfully:', emailResult)
+      const result = await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        templateParams,
+        EMAILJS_PUBLIC_KEY
+      )
+
+      console.log('EmailJS result:', result)
+      return result
+    } catch (error) {
+      console.error('EmailJS error:', error)
+      throw error
+    }
+  }
+
+  const sendAutoReply = async () => {
+    try {
+      const autoReplyParams = {
+        to_name: formData.name,
+        to_email: formData.email,
+        subject: formData.subject || 'Your message',
+        my_name: 'Emmanuel N',
+        my_email: 'emmanuelnavaraj@gmail.com'
+      }
+
+      await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        'auto_reply_template_id', // You'll need a separate template for auto-replies
+        autoReplyParams,
+        EMAILJS_PUBLIC_KEY
+      )
+
+      console.log('Auto-reply sent')
+    } catch (error) {
+      console.error('Auto-reply failed:', error)
+      // Don't fail the main request if auto-reply fails
+    }
+  }
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    
+    // Validation
+    if (!formData.name.trim() || !formData.email.trim() || !formData.message.trim()) {
+      setSubmitStatus({
+        type: 'error',
+        message: 'Please fill in all required fields'
+      })
+      return
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(formData.email)) {
+      setSubmitStatus({
+        type: 'error',
+        message: 'Please enter a valid email address'
+      })
+      return
+    }
+
+    setIsSubmitting(true)
+    setSubmitStatus(null)
+
+    try {
+      // Send email via EmailJS
+      const emailResult = await sendEmailViaEmailJS()
+      console.log('Email sent successfully via EmailJS:', emailResult)
+
+      // Auto-reply removed - just log success
+      console.log('Main email sent successfully, skipping auto-reply')
 
       // Save to Firebase (as backup and for admin dashboard)
       await addContactMessage({
@@ -236,7 +268,8 @@ export default function Contact() {
         userAgent: navigator.userAgent,
         timestamp: new Date().toISOString(),
         emailSent: true,
-        messageId: emailResult.messageId
+        emailService: 'EmailJS',
+        messageId: emailResult.text || 'EmailJS-' + Date.now()
       })
 
       setSubmitStatus({
@@ -244,7 +277,7 @@ export default function Contact() {
         message: 'Message sent successfully! Email delivered to Emmanuel. You should receive a confirmation shortly.'
       })
 
-      // Reset form if not authenticated (keep user data if logged in)
+      // Reset form
       if (!isAuthenticated) {
         setFormData({
           name: '',
@@ -273,12 +306,19 @@ export default function Contact() {
           userAgent: navigator.userAgent,
           timestamp: new Date().toISOString(),
           emailSent: false,
-          emailError: error.message
+          emailError: error.message,
+          emailService: 'EmailJS'
         })
         
+        // Fallback to mailto
+        const subject = encodeURIComponent(`${formData.urgency.toUpperCase()}: ${formData.subject || 'Contact from Portfolio'}`)
+        const body = encodeURIComponent(`Hi Emmanuel,\n\nName: ${formData.name}\nEmail: ${formData.email}\nPriority: ${formData.urgency}\n\nMessage:\n${formData.message}\n\n---\nSent from your portfolio contact form\nTimestamp: ${new Date().toLocaleString()}`)
+        
+        window.location.href = `mailto:emmanuelnavaraj@gmail.com?subject=${subject}&body=${body}`
+        
         setSubmitStatus({
-          type: 'error',
-          message: 'Email service temporarily unavailable, but your message has been saved. Try WhatsApp for immediate response.'
+          type: 'warning',
+          message: 'Email service temporarily unavailable. Opening your email client as backup. Your message has been saved.'
         })
       } catch (dbError) {
         console.error('Database error:', dbError)
@@ -300,7 +340,7 @@ export default function Contact() {
 
   const openWhatsApp = () => {
     const message = encodeURIComponent(`Hi Emmanuel! I'm ${formData.name || 'someone'} reaching out from your portfolio. ${formData.message || 'Would love to connect!'}`)
-    window.open(`https://wa.me/919876543210?text=${message}`, '_blank') // Replace with your actual WhatsApp number
+    window.open(`https://wa.me/918431477209?text=${message}`, '_blank')
   }
 
   const containerStyle = {
@@ -354,14 +394,14 @@ export default function Contact() {
       color: '#22c55e',
       description: 'Quick chat on WhatsApp',
       action: openWhatsApp,
-      handle: '+91 98765 43210' // Replace with your actual number
+      handle: '+91 8431477209'
     },
     {
       name: 'Discord',
       icon: '🎮',
       color: '#5865f2',
       description: 'Join me on Discord',
-      action: () => window.open('https://discord.gg/yourusername', '_blank'), // Replace with your Discord
+      action: () => window.open('https://discord.gg/yourusername', '_blank'),
       handle: '@emmanueln'
     },
     {
@@ -369,7 +409,7 @@ export default function Contact() {
       icon: '📸',
       color: '#e4405f',
       description: 'Connect on Instagram',
-      action: () => window.open('https://instagram.com/yourusername', '_blank'), // Replace with your Instagram
+      action: () => window.open('https://instagram.com/yourusername', '_blank'),
       handle: '@emmanuel_dev'
     }
   ]
@@ -440,6 +480,23 @@ export default function Contact() {
           }}></div>
         </div>
 
+        {/* EmailJS Setup Notice */}
+        {!EMAILJS_SERVICE_ID.startsWith('your_') ? null : (
+          <div style={{
+            ...glassCardStyle,
+            padding: '2rem',
+            marginBottom: '2rem',
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)'
+          }}>
+            <h3 style={{ color: '#fca5a5', marginBottom: '1rem' }}>⚠️ EmailJS Setup Required</h3>
+            <p style={{ color: '#fecaca', fontSize: '0.9rem' }}>
+              Replace the EmailJS configuration constants at the top of this component with your actual EmailJS service ID, template ID, and public key.
+              <br />Visit <a href="https://emailjs.com" target="_blank" rel="noopener noreferrer" style={{color: '#60a5fa'}}>EmailJS.com</a> to set up your account.
+            </p>
+          </div>
+        )}
+
         {/* Main Content Grid */}
         <div style={{
           display: 'grid',
@@ -496,7 +553,7 @@ export default function Contact() {
               </div>
             )}
 
-            <form onSubmit={handleSubmit}>
+            <form ref={formRef} onSubmit={handleSubmit}>
               <div style={{ marginBottom: '1.5rem' }}>
                 <label style={{
                   display: 'block',
@@ -622,16 +679,20 @@ export default function Contact() {
                   marginBottom: '1.5rem',
                   background: submitStatus.type === 'success' 
                     ? 'rgba(34, 197, 94, 0.1)' 
+                    : submitStatus.type === 'warning'
+                    ? 'rgba(245, 158, 11, 0.1)'
                     : 'rgba(239, 68, 68, 0.1)',
                   border: submitStatus.type === 'success'
                     ? '1px solid rgba(34, 197, 94, 0.3)'
+                    : submitStatus.type === 'warning'
+                    ? '1px solid rgba(245, 158, 11, 0.3)'
                     : '1px solid rgba(239, 68, 68, 0.3)',
-                  color: submitStatus.type === 'success' ? '#86efac' : '#fca5a5',
+                  color: submitStatus.type === 'success' ? '#86efac' : submitStatus.type === 'warning' ? '#fbbf24' : '#fca5a5',
                   animation: submitStatus.type === 'error' ? 'shake 0.5s ease-in-out' : 'success-pulse 2s ease-in-out'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     <span style={{ fontSize: '1.25rem' }}>
-                      {submitStatus.type === 'success' ? '✅' : '❌'}
+                      {submitStatus.type === 'success' ? '✅' : submitStatus.type === 'warning' ? '⚠️' : '❌'}
                     </span>
                     {submitStatus.message}
                   </div>
@@ -675,7 +736,7 @@ export default function Contact() {
                     <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite', marginRight: '0.5rem' }}>
                       ⏳
                     </span>
-                    Sending...
+                    Sending via EmailJS...
                   </>
                 ) : (
                   <>
