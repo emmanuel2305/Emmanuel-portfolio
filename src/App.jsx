@@ -16,6 +16,7 @@ import AddBlog from "./pages/AddBlog.jsx"
 import Services from "./pages/Services.jsx"
 import ServiceManagement from "./pages/ServiceManagement.jsx"
 import AdminUsers from "./pages/AdminUsers.jsx"
+import AdminAnalytics from "./pages/AdminAnalytics.jsx" // Add this import
 
 // Admin email configuration
 const ADMIN_EMAIL = "emmanuelnavaraj@gmail.com"
@@ -219,6 +220,15 @@ export default function App() {
             element={
               <ProtectedAdminRoute>
                 <AddBlog />
+              </ProtectedAdminRoute>
+            } 
+          />
+          {/* Add Analytics Route */}
+          <Route 
+            path="/admin/analytics" 
+            element={
+              <ProtectedAdminRoute>
+                <AdminAnalytics />
               </ProtectedAdminRoute>
             } 
           />

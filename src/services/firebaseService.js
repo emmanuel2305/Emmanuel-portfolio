@@ -9,9 +9,67 @@ import {
   orderBy, 
   where,
   serverTimestamp,
-  getDoc 
+  getDoc,
+  arrayUnion,
+  arrayRemove,
+  increment
 } from 'firebase/firestore'
 import { db } from '../config/firebase'
+
+// Image Compression Function
+export const compressImageToBase64 = async (file, maxSizeKB = 800) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    
+    reader.onload = (e) => {
+      const img = new Image()
+      
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const ctx = canvas.getContext('2d')
+        
+        let width = img.width
+        let height = img.height
+        const maxDim = 1200
+        
+        if (width > height && width > maxDim) {
+          height = (height * maxDim) / width
+          width = maxDim
+        } else if (height > maxDim) {
+          width = (width * maxDim) / height
+          height = maxDim
+        }
+        
+        canvas.width = width
+        canvas.height = height
+        ctx.drawImage(img, 0, 0, width, height)
+        
+        let quality = 0.8
+        let dataUrl = canvas.toDataURL('image/jpeg', quality)
+        
+        const maxBytes = maxSizeKB * 1024 * 1.37
+        
+        while (dataUrl.length > maxBytes && quality > 0.1) {
+          quality -= 0.05
+          dataUrl = canvas.toDataURL('image/jpeg', quality)
+        }
+        
+        if (dataUrl.length > maxBytes) {
+          reject(new Error('Unable to compress image below size limit. Please use a smaller image.'))
+        } else {
+          console.log(`Image compressed: ${(dataUrl.length / 1024).toFixed(2)}KB at quality ${quality.toFixed(2)}`)
+          resolve(dataUrl)
+        }
+      }
+      
+      img.onerror = () => reject(new Error('Failed to load image'))
+      img.src = e.target.result
+    }
+    
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
 
 // User Functions
 export const addUser = async (userData) => {
@@ -110,7 +168,9 @@ export const addBlog = async (blogData) => {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       views: 0,
-      likes: 0
+      likes: 0,
+      likedBy: [], // Track who liked the blog
+      viewedBy: [] // Track who viewed the blog
     })
     return blogRef.id
   } catch (error) {
@@ -164,8 +224,81 @@ export const updateBlog = async (blogId, updateData) => {
   }
 }
 
+// FIXED: Toggle like with proper tracking
+export const toggleBlogLike = async (blogId, userId) => {
+  try {
+    const blogRef = doc(db, 'blogs', blogId)
+    const blogSnap = await getDoc(blogRef)
+    
+    if (!blogSnap.exists()) {
+      throw new Error('Blog not found')
+    }
+    
+    const blogData = blogSnap.data()
+    const likedBy = blogData.likedBy || []
+    const isLiked = likedBy.includes(userId)
+    
+    if (isLiked) {
+      // Unlike
+      await updateDoc(blogRef, {
+        likes: increment(-1),
+        likedBy: arrayRemove(userId),
+        updatedAt: serverTimestamp()
+      })
+      return false
+    } else {
+      // Like
+      await updateDoc(blogRef, {
+        likes: increment(1),
+        likedBy: arrayUnion(userId),
+        updatedAt: serverTimestamp()
+      })
+      return true
+    }
+  } catch (error) {
+    console.error('Error toggling blog like:', error)
+    throw error
+  }
+}
+
+// FIXED: Track view only once per user
+export const incrementBlogView = async (blogId, userId) => {
+  try {
+    const blogRef = doc(db, 'blogs', blogId)
+    const blogSnap = await getDoc(blogRef)
+    
+    if (!blogSnap.exists()) {
+      throw new Error('Blog not found')
+    }
+    
+    const blogData = blogSnap.data()
+    const viewedBy = blogData.viewedBy || []
+    
+    // Only increment if user hasn't viewed before
+    if (!viewedBy.includes(userId)) {
+      await updateDoc(blogRef, {
+        views: increment(1),
+        viewedBy: arrayUnion(userId),
+        updatedAt: serverTimestamp()
+      })
+    }
+  } catch (error) {
+    console.error('Error incrementing blog view:', error)
+    throw error
+  }
+}
+
 export const deleteBlog = async (blogId) => {
   try {
+    // Delete all comments associated with this blog
+    const commentsRef = collection(db, 'comments')
+    const q = query(commentsRef, where('blogId', '==', blogId))
+    const querySnapshot = await getDocs(q)
+    
+    const deletePromises = querySnapshot.docs.map(doc => deleteDoc(doc.ref))
+    await Promise.all(deletePromises)
+    
+    // Delete the blog
     await deleteDoc(doc(db, 'blogs', blogId))
   } catch (error) {
     console.error('Error deleting blog:', error)
@@ -173,47 +306,166 @@ export const deleteBlog = async (blogId) => {
   }
 }
 
-// Helper function to compress image if needed
-export const compressImage = (file, maxSizeMB = 1) => {
-  return new Promise((resolve) => {
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-    const img = new Image()
+// ===== GLOBAL COMMENT SYSTEM =====
+
+// Add a comment to a blog
+export const addComment = async (blogId, commentData) => {
+  try {
+    const commentRef = await addDoc(collection(db, 'comments'), {
+      blogId,
+      ...commentData,
+      likes: 0,
+      likedBy: [],
+      replies: [], // Store reply IDs
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    })
+    return commentRef.id
+  } catch (error) {
+    console.error('Error adding comment:', error)
+    throw error
+  }
+}
+
+// Get all comments for a blog
+export const getCommentsByBlogId = async (blogId) => {
+  try {
+    const q = query(
+      collection(db, 'comments'), 
+      where('blogId', '==', blogId),
+      where('parentId', '==', null), // Only get top-level comments
+      orderBy('createdAt', 'desc')
+    )
+    const querySnapshot = await getDocs(q)
     
-    img.onload = () => {
-      // Calculate new dimensions to maintain aspect ratio
-      let { width, height } = img
-      const maxDimension = 1200
-      
-      if (width > height && width > maxDimension) {
-        height = (height * maxDimension) / width
-        width = maxDimension
-      } else if (height > maxDimension) {
-        width = (width * maxDimension) / height
-        height = maxDimension
+    const comments = []
+    for (const docSnap of querySnapshot.docs) {
+      const commentData = {
+        id: docSnap.id,
+        ...docSnap.data()
       }
       
-      canvas.width = width
-      canvas.height = height
-      
-      // Draw and compress
-      ctx.drawImage(img, 0, 0, width, height)
-      
-      // Try different quality levels until we get under the size limit
-      let quality = 0.8
-      let dataUrl = canvas.toDataURL('image/jpeg', quality)
-      
-      while (dataUrl.length > maxSizeMB * 1024 * 1024 * 1.37 && quality > 0.1) {
-        quality -= 0.1
-        dataUrl = canvas.toDataURL('image/jpeg', quality)
-      }
-      
-      resolve(dataUrl)
+      // Get replies for this comment
+      commentData.replies = await getRepliesByCommentId(docSnap.id)
+      comments.push(commentData)
     }
     
-    img.src = URL.createObjectURL(file)
-  })
+    return comments
+  } catch (error) {
+    console.error('Error getting comments:', error)
+    throw error
+  }
 }
+
+// Get replies for a comment
+export const getRepliesByCommentId = async (commentId) => {
+  try {
+    const q = query(
+      collection(db, 'comments'), 
+      where('parentId', '==', commentId),
+      orderBy('createdAt', 'asc')
+    )
+    const querySnapshot = await getDocs(q)
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }))
+  } catch (error) {
+    console.error('Error getting replies:', error)
+    throw error
+  }
+}
+
+// Add a reply to a comment
+export const addReply = async (blogId, parentCommentId, replyData) => {
+  try {
+    const replyRef = await addDoc(collection(db, 'comments'), {
+      blogId,
+      parentId: parentCommentId,
+      ...replyData,
+      likes: 0,
+      likedBy: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    })
+    return replyRef.id
+  } catch (error) {
+    console.error('Error adding reply:', error)
+    throw error
+  }
+}
+
+// Toggle like on a comment
+export const toggleCommentLike = async (commentId, userId) => {
+  try {
+    const commentRef = doc(db, 'comments', commentId)
+    const commentSnap = await getDoc(commentRef)
+    
+    if (!commentSnap.exists()) {
+      throw new Error('Comment not found')
+    }
+    
+    const commentData = commentSnap.data()
+    const likedBy = commentData.likedBy || []
+    const isLiked = likedBy.includes(userId)
+    
+    if (isLiked) {
+      await updateDoc(commentRef, {
+        likes: increment(-1),
+        likedBy: arrayRemove(userId),
+        updatedAt: serverTimestamp()
+      })
+      return false
+    } else {
+      await updateDoc(commentRef, {
+        likes: increment(1),
+        likedBy: arrayUnion(userId),
+        updatedAt: serverTimestamp()
+      })
+      return true
+    }
+  } catch (error) {
+    console.error('Error toggling comment like:', error)
+    throw error
+  }
+}
+
+// Delete a comment (and all its replies)
+export const deleteComment = async (commentId) => {
+  try {
+    // Delete all replies first
+    const repliesQuery = query(
+      collection(db, 'comments'),
+      where('parentId', '==', commentId)
+    )
+    const repliesSnapshot = await getDocs(repliesQuery)
+    const deletePromises = repliesSnapshot.docs.map(doc => deleteDoc(doc.ref))
+    await Promise.all(deletePromises)
+    
+    // Delete the comment itself
+    await deleteDoc(doc(db, 'comments', commentId))
+  } catch (error) {
+    console.error('Error deleting comment:', error)
+    throw error
+  }
+}
+
+// Update a comment
+export const updateComment = async (commentId, text) => {
+  try {
+    const commentRef = doc(db, 'comments', commentId)
+    await updateDoc(commentRef, {
+      text,
+      edited: true,
+      updatedAt: serverTimestamp()
+    })
+  } catch (error) {
+    console.error('Error updating comment:', error)
+    throw error
+  }
+}
+
+// ===== REST OF THE EXISTING FUNCTIONS =====
 
 // Project Functions
 export const addProject = async (projectData) => {
@@ -303,7 +555,7 @@ export const deleteProject = async (projectId) => {
   }
 }
 
-// Service Booking Functions - Updated to work with user UID
+// Service Booking Functions (continued...)
 export const addServiceBooking = async (bookingData) => {
   try {
     const bookingRef = await addDoc(collection(db, 'service_bookings'), {

@@ -9,12 +9,26 @@ import {
   Lock, 
   LogIn,
   Send,
-  ThumbsUp,
-  ExternalLink
+  ExternalLink,
+  MoreVertical,
+  Edit2,
+  Trash2,
+  Reply
 } from 'lucide-react'
 import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from '../config/firebase'
-import { getUserByEmail, getPublishedBlogs, updateBlog } from '../services/firebaseService'
+import { 
+  getUserByEmail, 
+  getPublishedBlogs, 
+  toggleBlogLike,
+  incrementBlogView,
+  addComment,
+  getCommentsByBlogId,
+  addReply,
+  toggleCommentLike,
+  deleteComment,
+  updateComment
+} from '../services/firebaseService'
 import GoogleAuthModal from "../components/Auth/GoogleAuthModal.jsx"
 
 export default function Blog() {
@@ -30,29 +44,24 @@ export default function Blog() {
   const [showBlogModal, setShowBlogModal] = useState(false)
   const [comments, setComments] = useState({})
   const [newComment, setNewComment] = useState('')
-  const [likedBlogs, setLikedBlogs] = useState(new Set())
+  const [replyingTo, setReplyingTo] = useState(null)
+  const [replyText, setReplyText] = useState('')
+  const [editingComment, setEditingComment] = useState(null)
+  const [editText, setEditText] = useState('')
   const particlesRef = useRef(null)
 
   const categories = ['All', 'Web Development', 'Mobile Development', 'AI/ML', 'Data Science', 'DevOps', 'UI/UX', 'Programming', 'Tech News', 'Tutorials', 'Career']
 
   useEffect(() => {
-    // Firebase Auth State Listener
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setAuthLoading(true)
       
       if (firebaseUser) {
         try {
           const userDoc = await getUserByEmail(firebaseUser.email)
-          
           if (userDoc) {
             setUser(userDoc)
-            // Get user's liked blogs from localStorage
-            const userLikes = localStorage.getItem(`likedBlogs_${userDoc.uid}`)
-            if (userLikes) {
-              setLikedBlogs(new Set(JSON.parse(userLikes)))
-            }
           } else {
-            console.warn('User authenticated but no Firestore document found')
             setUser(null)
           }
         } catch (error) {
@@ -61,7 +70,6 @@ export default function Blog() {
         }
       } else {
         setUser(null)
-        setLikedBlogs(new Set())
       }
       
       setAuthLoading(false)
@@ -72,13 +80,11 @@ export default function Blog() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      // Add Google Fonts and global styles
       const link = document.createElement('link')
       link.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap'
       link.rel = 'stylesheet'
       document.head.appendChild(link)
 
-      // Set body styles
       document.body.style.fontFamily = 'Inter, sans-serif'
       document.body.style.background = '#0a0a0a'
       document.body.style.color = '#f0f0f0'
@@ -87,7 +93,6 @@ export default function Blog() {
       document.body.style.scrollBehavior = 'smooth'
       document.body.style.overflowX = 'hidden'
 
-      // Create particles
       const createParticles = () => {
         if (!particlesRef.current) return
         
@@ -112,7 +117,6 @@ export default function Blog() {
         }
       }
 
-      // Add keyframes
       const style = document.createElement('style')
       style.textContent = `
         @keyframes particle-float {
@@ -164,97 +168,163 @@ export default function Blog() {
     }
   }
 
-  const handleAuthSuccess = async (userData) => {
-    setUser(userData)
-    setShowAuthModal(false)
-    // Load user's liked blogs
-    const userLikes = localStorage.getItem(`likedBlogs_${userData.uid}`)
-    if (userLikes) {
-      setLikedBlogs(new Set(JSON.parse(userLikes)))
+  const loadComments = async (blogId) => {
+    try {
+      const commentsData = await getCommentsByBlogId(blogId)
+      setComments(prev => ({
+        ...prev,
+        [blogId]: commentsData
+      }))
+    } catch (error) {
+      console.error('Error loading comments:', error)
     }
   }
 
-  const handleLikeBlog = async (blogId) => {
+  const handleAuthSuccess = async (userData) => {
+    setUser(userData)
+    setShowAuthModal(false)
+  }
+
+  const handleLikeBlog = async (blogId, e) => {
+    e?.stopPropagation()
     if (!user) return
     
     try {
-      const newLikedBlogs = new Set(likedBlogs)
-      const blog = blogs.find(b => b.id === blogId)
-      let newLikes = blog.likes || 0
+      const isLiked = await toggleBlogLike(blogId, user.uid)
       
-      if (likedBlogs.has(blogId)) {
-        newLikedBlogs.delete(blogId)
-        newLikes = Math.max(0, newLikes - 1)
-      } else {
-        newLikedBlogs.add(blogId)
-        newLikes += 1
-      }
-      
-      setLikedBlogs(newLikedBlogs)
-      
-      // Save to localStorage
-      localStorage.setItem(`likedBlogs_${user.uid}`, JSON.stringify([...newLikedBlogs]))
-      
-      // Update blog in state
       setBlogs(prevBlogs => 
-        prevBlogs.map(b => 
-          b.id === blogId ? { ...b, likes: newLikes } : b
-        )
+        prevBlogs.map(b => {
+          if (b.id === blogId) {
+            const likedBy = b.likedBy || []
+            const newLikedBy = isLiked 
+              ? [...likedBy, user.uid]
+              : likedBy.filter(id => id !== user.uid)
+            return {
+              ...b,
+              likes: isLiked ? (b.likes || 0) + 1 : Math.max(0, (b.likes || 0) - 1),
+              likedBy: newLikedBy
+            }
+          }
+          return b
+        })
       )
-      
-      // Update in Firebase
-      await updateBlog(blogId, { likes: newLikes })
-      
+
+      if (selectedBlog?.id === blogId) {
+        const blog = blogs.find(b => b.id === blogId)
+        if (blog) {
+          const likedBy = blog.likedBy || []
+          const newLikedBy = isLiked 
+            ? [...likedBy, user.uid]
+            : likedBy.filter(id => id !== user.uid)
+          setSelectedBlog({
+            ...blog,
+            likes: isLiked ? (blog.likes || 0) + 1 : Math.max(0, (blog.likes || 0) - 1),
+            likedBy: newLikedBy
+          })
+        }
+      }
     } catch (error) {
-      console.error('Error updating blog likes:', error)
+      console.error('Error toggling like:', error)
     }
   }
 
   const handleShareWhatsApp = (blog) => {
-    const text = `Check out this amazing blog post: "${blog.title}" by ${user?.name || 'Developer'}\n\n${blog.excerpt}\n\nRead more at: ${window.location.origin}/blog/${blog.slug}`
+    const text = `Check out this blog: "${blog.title}"\n\n${blog.excerpt}\n\nRead more at: ${window.location.origin}/blog/${blog.slug}`
     const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
     window.open(whatsappUrl, '_blank')
   }
 
-  const handleViewBlog = (blog) => {
+  const handleViewBlog = async (blog) => {
     setSelectedBlog(blog)
     setShowBlogModal(true)
     
-    // Update view count
-    const updatedViews = (blog.views || 0) + 1
-    setBlogs(prevBlogs => 
-      prevBlogs.map(b => 
-        b.id === blog.id ? { ...b, views: updatedViews } : b
+    if (user) {
+      await incrementBlogView(blog.id, user.uid)
+      setBlogs(prevBlogs => 
+        prevBlogs.map(b => 
+          b.id === blog.id ? { ...b, views: (b.views || 0) + 1 } : b
+        )
       )
-    )
-    
-    // Update in Firebase (fire and forget)
-    updateBlog(blog.id, { views: updatedViews }).catch(console.error)
+    }
+
+    await loadComments(blog.id)
   }
 
-  const handleAddComment = (blogId) => {
-    if (!newComment.trim() || !user) return
+  const handleAddComment = async () => {
+    if (!newComment.trim() || !user || !selectedBlog) return
     
-    const comment = {
-      id: Date.now(),
-      text: newComment.trim(),
-      author: user.name,
-      authorEmail: user.email,
-      createdAt: new Date().toISOString(),
-      likes: 0
+    try {
+      await addComment(selectedBlog.id, {
+        userId: user.uid,
+        userName: user.name,
+        userEmail: user.email,
+        userPhoto: user.photoURL || null,
+        text: newComment.trim(),
+        parentId: null
+      })
+      
+      setNewComment('')
+      await loadComments(selectedBlog.id)
+    } catch (error) {
+      console.error('Error adding comment:', error)
     }
+  }
+
+  const handleAddReply = async (commentId) => {
+    if (!replyText.trim() || !user || !selectedBlog) return
     
-    setComments(prev => ({
-      ...prev,
-      [blogId]: [...(prev[blogId] || []), comment]
-    }))
+    try {
+      await addReply(selectedBlog.id, commentId, {
+        userId: user.uid,
+        userName: user.name,
+        userEmail: user.email,
+        userPhoto: user.photoURL || null,
+        text: replyText.trim()
+      })
+      
+      setReplyText('')
+      setReplyingTo(null)
+      await loadComments(selectedBlog.id)
+    } catch (error) {
+      console.error('Error adding reply:', error)
+    }
+  }
+
+  const handleLikeComment = async (commentId) => {
+    if (!user) return
     
-    setNewComment('')
+    try {
+      await toggleCommentLike(commentId, user.uid)
+      await loadComments(selectedBlog.id)
+    } catch (error) {
+      console.error('Error liking comment:', error)
+    }
+  }
+
+  const handleDeleteComment = async (commentId) => {
+    if (!user) return
     
-    // Save to localStorage (in a real app, you'd save to Firebase)
-    const blogComments = JSON.parse(localStorage.getItem(`comments_${blogId}`) || '[]')
-    blogComments.push(comment)
-    localStorage.setItem(`comments_${blogId}`, JSON.stringify(blogComments))
+    if (confirm('Are you sure you want to delete this comment?')) {
+      try {
+        await deleteComment(commentId)
+        await loadComments(selectedBlog.id)
+      } catch (error) {
+        console.error('Error deleting comment:', error)
+      }
+    }
+  }
+
+  const handleEditComment = async (commentId) => {
+    if (!editText.trim()) return
+    
+    try {
+      await updateComment(commentId, editText.trim())
+      setEditingComment(null)
+      setEditText('')
+      await loadComments(selectedBlog.id)
+    } catch (error) {
+      console.error('Error editing comment:', error)
+    }
   }
 
   const formatDate = (timestamp) => {
@@ -272,6 +342,25 @@ export default function Blog() {
       month: 'long',
       day: 'numeric'
     })
+  }
+
+  const formatTimeAgo = (timestamp) => {
+    if (!timestamp) return ''
+    
+    let date
+    if (timestamp.seconds) {
+      date = new Date(timestamp.seconds * 1000)
+    } else {
+      date = new Date(timestamp)
+    }
+    
+    const seconds = Math.floor((new Date() - date) / 1000)
+    
+    if (seconds < 60) return 'just now'
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+    if (seconds < 604800) return `${Math.floor(seconds / 86400)}d ago`
+    return formatDate(timestamp)
   }
 
   const filteredBlogs = blogs.filter(blog => {
@@ -302,28 +391,6 @@ export default function Blog() {
     overflow: 'hidden'
   }
 
-  const filterStyle = {
-    background: 'rgba(255,255,255,0.1)',
-    backdropFilter: 'blur(10px)',
-    border: '1px solid rgba(255,255,255,0.2)',
-    color: '#e2e8f0',
-    padding: '0.75rem 1.5rem',
-    borderRadius: '9999px',
-    fontWeight: '600',
-    fontSize: '0.875rem',
-    cursor: 'pointer',
-    transition: 'all 0.3s ease'
-  }
-
-  const activeFilterStyle = {
-    ...filterStyle,
-    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    color: 'white',
-    transform: 'translateY(-2px)',
-    boxShadow: '0 10px 25px rgba(102, 126, 234, 0.3)'
-  }
-
-  // Loading state
   if (authLoading) {
     return (
       <div style={containerStyle}>
@@ -343,25 +410,12 @@ export default function Blog() {
             borderRadius: '50%',
             animation: 'spin 1s linear infinite'
           }}></div>
-          <p style={{
-            color: '#cbd5e1',
-            fontSize: '1.125rem',
-            fontWeight: 500
-          }}>
-            Loading blog...
-          </p>
+          <p style={{ color: '#cbd5e1', fontSize: '1.125rem', fontWeight: 500 }}>Loading blog...</p>
         </div>
-        <style jsx>{`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}</style>
       </div>
     )
   }
 
-  // Authentication required screen
   if (!user) {
     return (
       <>
@@ -412,7 +466,7 @@ export default function Blog() {
                 marginBottom: '2.5rem',
                 lineHeight: 1.6
               }}>
-                Please sign in to access our blog posts, like articles, share insights, and join the conversation with fellow developers.
+                Sign in to read blogs, like posts, and join the conversation with fellow developers.
               </p>
               
               <button
@@ -433,48 +487,10 @@ export default function Blog() {
                   transition: 'all 0.3s ease',
                   boxShadow: '0 10px 25px rgba(99, 102, 241, 0.3)'
                 }}
-                onMouseEnter={(e) => {
-                  e.target.style.transform = 'translateY(-2px) scale(1.05)'
-                  e.target.style.boxShadow = '0 20px 40px rgba(99, 102, 241, 0.4)'
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.transform = 'translateY(0) scale(1)'
-                  e.target.style.boxShadow = '0 10px 25px rgba(99, 102, 241, 0.3)'
-                }}
               >
                 <LogIn size={20} />
                 Sign In to Read Blogs
               </button>
-              
-              <div style={{
-                marginTop: '2rem',
-                padding: '1.5rem',
-                background: 'rgba(99, 102, 241, 0.1)',
-                borderRadius: '1rem',
-                border: '1px solid rgba(99, 102, 241, 0.2)'
-              }}>
-                <h4 style={{
-                  margin: '0 0 0.5rem 0',
-                  color: '#6366f1',
-                  fontWeight: 600,
-                  fontSize: '1rem'
-                }}>
-                  Why sign in?
-                </h4>
-                <ul style={{
-                  textAlign: 'left',
-                  color: '#e2e8f0',
-                  fontSize: '0.875rem',
-                  lineHeight: 1.6,
-                  margin: 0,
-                  paddingLeft: '1.25rem'
-                }}>
-                  <li>Like and share your favorite articles</li>
-                  <li>Leave comments and engage with the community</li>
-                  <li>Get personalized content recommendations</li>
-                  <li>Access to exclusive developer insights</li>
-                </ul>
-              </div>
             </div>
           </div>
         </div>
@@ -488,38 +504,272 @@ export default function Blog() {
     )
   }
 
-  const LoadingCard = () => (
-    <div style={{
-      ...glassCardStyle,
-      padding: '2rem',
-      background: 'linear-gradient(90deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 100%)',
-      backgroundSize: '200% 100%',
-      animation: 'shimmer 2s infinite'
-    }}>
-      <div style={{ height: '12rem', background: 'rgba(255,255,255,0.1)', borderRadius: '1rem', marginBottom: '1.5rem' }}></div>
-      <div style={{ height: '1.5rem', background: 'rgba(255,255,255,0.1)', borderRadius: '0.5rem', marginBottom: '1rem', width: '80%' }}></div>
-      <div style={{ height: '1rem', background: 'rgba(255,255,255,0.1)', borderRadius: '0.5rem', marginBottom: '0.5rem' }}></div>
-      <div style={{ height: '1rem', background: 'rgba(255,255,255,0.1)', borderRadius: '0.5rem', width: '60%' }}></div>
-    </div>
-  )
+  const CommentItem = ({ comment, isReply = false }) => {
+    const isLiked = comment.likedBy?.includes(user.uid)
+    const isAuthor = comment.userId === user.uid
+
+    return (
+      <div style={{
+        padding: isReply ? '1rem' : '1.5rem',
+        background: isReply ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.05)',
+        borderRadius: '1rem',
+        border: '1px solid rgba(255,255,255,0.1)',
+        marginLeft: isReply ? '3rem' : '0'
+      }}>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <div style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '50%',
+            background: comment.userPhoto 
+              ? `url(${comment.userPhoto}) center/cover` 
+              : 'linear-gradient(135deg, #6366f1, #3730a3)',
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontWeight: 600
+          }}>
+            {!comment.userPhoto && comment.userName?.charAt(0).toUpperCase()}
+          </div>
+
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+              <div>
+                <h5 style={{
+                  color: '#f8fafc',
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  margin: 0
+                }}>
+                  {comment.userName}
+                </h5>
+                <p style={{
+                  color: '#94a3b8',
+                  fontSize: '0.75rem',
+                  margin: '0.25rem 0 0 0'
+                }}>
+                  {formatTimeAgo(comment.createdAt)}
+                  {comment.edited && <span style={{ marginLeft: '0.5rem' }}>(edited)</span>}
+                </p>
+              </div>
+
+              {isAuthor && (
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    onClick={() => {
+                      setEditingComment(comment.id)
+                      setEditText(comment.text)
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#6366f1',
+                      cursor: 'pointer',
+                      padding: '0.25rem'
+                    }}
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteComment(comment.id)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                      padding: '0.25rem'
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {editingComment === comment.id ? (
+              <div style={{ marginTop: '0.5rem' }}>
+                <textarea
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    borderRadius: '0.5rem',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    background: 'rgba(255,255,255,0.05)',
+                    color: '#f8fafc',
+                    fontSize: '0.875rem',
+                    fontFamily: 'inherit',
+                    resize: 'vertical',
+                    minHeight: '60px',
+                    marginBottom: '0.5rem',
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    onClick={() => handleEditComment(comment.id)}
+                    style={{
+                      background: '#6366f1',
+                      color: 'white',
+                      border: 'none',
+                      padding: '0.5rem 1rem',
+                      borderRadius: '0.5rem',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingComment(null)
+                      setEditText('')
+                    }}
+                    style={{
+                      background: 'rgba(255,255,255,0.1)',
+                      color: '#cbd5e1',
+                      border: 'none',
+                      padding: '0.5rem 1rem',
+                      borderRadius: '0.5rem',
+                      fontSize: '0.75rem',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p style={{
+                  color: '#e2e8f0',
+                  lineHeight: 1.6,
+                  margin: '0 0 0.75rem 0',
+                  fontSize: '0.875rem'
+                }}>
+                  {comment.text}
+                </p>
+
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <button
+                    onClick={() => handleLikeComment(comment.id)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: isLiked ? '#ef4444' : '#94a3b8',
+                      cursor: 'pointer',
+                      padding: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.25rem',
+                      fontSize: '0.75rem',
+                      fontWeight: 600
+                    }}
+                  >
+                    <Heart size={14} fill={isLiked ? 'currentColor' : 'none'} />
+                    {comment.likes || 0}
+                  </button>
+
+                  {!isReply && (
+                    <button
+                      onClick={() => setReplyingTo(comment.id)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#94a3b8',
+                        cursor: 'pointer',
+                        padding: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        fontSize: '0.75rem',
+                        fontWeight: 600
+                      }}
+                    >
+                      <Reply size={14} />
+                      Reply
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {!isReply && replyingTo === comment.id && (
+          <div style={{ marginTop: '1rem', marginLeft: '3rem' }}>
+            <textarea
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              placeholder="Write a reply..."
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                borderRadius: '0.5rem',
+                border: '1px solid rgba(255,255,255,0.2)',
+                background: 'rgba(255,255,255,0.05)',
+                color: '#f8fafc',
+                fontSize: '0.875rem',
+                fontFamily: 'inherit',
+                resize: 'vertical',
+                minHeight: '60px',
+                marginBottom: '0.5rem',
+                boxSizing: 'border-box'
+              }}
+            />
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={() => handleAddReply(comment.id)}
+                style={{
+                  background: '#6366f1',
+                  color: 'white',
+                  border: 'none',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.75rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Reply
+              </button>
+              <button
+                onClick={() => {
+                  setReplyingTo(null)
+                  setReplyText('')
+                }}
+                style={{
+                  background: 'rgba(255,255,255,0.1)',
+                  color: '#cbd5e1',
+                  border: 'none',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '0.5rem',
+                  fontSize: '0.75rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!isReply && comment.replies?.length > 0 && (
+          <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {comment.replies.map(reply => (
+              <CommentItem key={reply.id} comment={reply} isReply={true} />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div style={containerStyle}>
-      {/* Particles */}
       <div ref={particlesRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}></div>
-
-      {/* Floating elements */}
-      <div style={{
-        position: 'absolute',
-        top: '10rem',
-        right: '5rem',
-        width: '8rem',
-        height: '8rem',
-        background: 'linear-gradient(45deg, rgba(99, 102, 241, 0.1), rgba(168, 85, 247, 0.1))',
-        borderRadius: '30% 70% 70% 30% / 30% 30% 70% 70%',
-        animation: 'float-slow 8s ease-in-out infinite',
-        opacity: 0.3
-      }}></div>
 
       <div style={{
         maxWidth: '1200px',
@@ -527,12 +777,10 @@ export default function Blog() {
         position: 'relative',
         zIndex: 10
       }}>
-        {/* Welcome Message */}
         <div style={{
           textAlign: 'center',
           marginBottom: '2rem',
           opacity: showElements ? 1 : 0,
-          transform: showElements ? 'translateY(0)' : 'translateY(20px)',
           transition: 'all 0.8s ease-out'
         }}>
           <div style={{
@@ -552,19 +800,17 @@ export default function Blog() {
           </div>
         </div>
 
-        {/* Header */}
         <div style={{
           textAlign: 'center',
           marginBottom: '4rem',
           opacity: showElements ? 1 : 0,
-          transform: showElements ? 'translateY(0)' : 'translateY(20px)',
           transition: 'all 0.8s ease-out 0.2s'
         }}>
           <h1 style={{
             fontSize: 'clamp(3rem, 6vw, 5rem)',
             fontWeight: 900,
             marginBottom: '1rem',
-            textShadow: '0 0 30px rgba(99, 102, 241, 0.5), 0 0 60px rgba(99, 102, 241, 0.3)',
+            textShadow: '0 0 30px rgba(99, 102, 241, 0.5)',
             animation: 'pulse-glow 3s ease-in-out infinite alternate'
           }}>
             <span style={{ color: '#6366f1' }}>Blog</span> & <span style={{ color: '#a855f7' }}>Insights</span>
@@ -575,18 +821,15 @@ export default function Blog() {
             maxWidth: '600px',
             margin: '0 auto'
           }}>
-            Sharing knowledge, insights, and experiences from my journey in tech
+            Sharing knowledge, insights, and experiences from the tech world
           </p>
         </div>
 
-        {/* Search and Filters */}
         <div style={{
           marginBottom: '3rem',
           opacity: showElements ? 1 : 0,
-          transform: showElements ? 'translateY(0)' : 'translateY(20px)',
           transition: 'all 0.8s ease-out 0.2s'
         }}>
-          {/* Search Bar */}
           <div style={{
             ...glassCardStyle,
             padding: '1.5rem',
@@ -594,7 +837,7 @@ export default function Blog() {
           }}>
             <input
               type="text"
-              placeholder="🔍 Search blogs by title, content, or tags..."
+              placeholder="🔍 Search blogs..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{
@@ -611,7 +854,6 @@ export default function Blog() {
             />
           </div>
 
-          {/* Category Filters */}
           <div style={{
             display: 'flex',
             flexWrap: 'wrap',
@@ -622,18 +864,21 @@ export default function Blog() {
               <button
                 key={category}
                 onClick={() => setSelectedCategory(category)}
-                style={selectedCategory === category ? activeFilterStyle : filterStyle}
-                onMouseEnter={(e) => {
-                  if (selectedCategory !== category) {
-                    e.target.style.background = 'rgba(99, 102, 241, 0.2)'
-                    e.target.style.transform = 'translateY(-2px)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (selectedCategory !== category) {
-                    e.target.style.background = 'rgba(255,255,255,0.1)'
-                    e.target.style.transform = 'translateY(0)'
-                  }
+                style={{
+                  background: selectedCategory === category 
+                    ? 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' 
+                    : 'rgba(255,255,255,0.1)',
+                  backdropFilter: 'blur(10px)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  color: selectedCategory === category ? 'white' : '#e2e8f0',
+                  padding: '0.75rem 1.5rem',
+                  borderRadius: '9999px',
+                  fontWeight: '600',
+                  fontSize: '0.875rem',
+                  cursor: 'pointer',
+                  transition: 'all 0.3s ease',
+                  transform: selectedCategory === category ? 'translateY(-2px)' : 'translateY(0)',
+                  boxShadow: selectedCategory === category ? '0 10px 25px rgba(102, 126, 234, 0.3)' : 'none'
                 }}
               >
                 {category}
@@ -642,309 +887,167 @@ export default function Blog() {
           </div>
         </div>
 
-        {/* Blog Grid */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
           gap: '2rem',
           opacity: showElements ? 1 : 0,
-          transform: showElements ? 'translateY(0)' : 'translateY(20px)',
           transition: 'all 0.8s ease-out 0.4s'
         }}>
           {loading ? (
-            Array.from({ length: 6 }).map((_, index) => <LoadingCard key={index} />)
+            Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} style={{
+                ...glassCardStyle,
+                padding: '2rem',
+                background: 'linear-gradient(90deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 100%)',
+                backgroundSize: '200% 100%',
+                animation: 'shimmer 2s infinite'
+              }}>
+                <div style={{ height: '12rem', background: 'rgba(255,255,255,0.1)', borderRadius: '1rem', marginBottom: '1.5rem' }}></div>
+                <div style={{ height: '1.5rem', background: 'rgba(255,255,255,0.1)', borderRadius: '0.5rem', marginBottom: '1rem', width: '80%' }}></div>
+                <div style={{ height: '1rem', background: 'rgba(255,255,255,0.1)', borderRadius: '0.5rem', marginBottom: '0.5rem' }}></div>
+              </div>
+            ))
           ) : filteredBlogs.length > 0 ? (
-            filteredBlogs.map((blog, index) => (
-              <article
-                key={blog.id}
-                style={{
-                  ...glassCardStyle,
-                  padding: '0',
-                  cursor: 'pointer',
-                  opacity: showElements ? 1 : 0,
-                  transform: showElements ? 'translateY(0)' : 'translateY(20px)',
-                  transition: `all 0.8s ease-out ${0.4 + index * 0.1}s`
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-5px) scale(1.02)'
-                  e.currentTarget.style.boxShadow = '0 35px 60px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.2)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0) scale(1)'
-                  e.currentTarget.style.boxShadow = '0 25px 45px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1)'
-                }}
-              >
-                {/* Featured Image */}
-                {blog.featuredImage && (
-                  <div style={{
-                    height: '12rem',
-                    background: `url(${blog.featuredImage}) center/cover`,
-                    borderRadius: '1.5rem 1.5rem 0 0',
-                    position: 'relative'
-                  }}>
+            filteredBlogs.map((blog, index) => {
+              const isLiked = blog.likedBy?.includes(user.uid)
+              return (
+                <article
+                  key={blog.id}
+                  style={{
+                    ...glassCardStyle,
+                    padding: '0',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => handleViewBlog(blog)}
+                >
+                  {blog.featuredImage && (
                     <div style={{
-                      position: 'absolute',
-                      bottom: '1rem',
-                      right: '1rem',
-                      background: 'rgba(0,0,0,0.7)',
-                      color: 'white',
-                      padding: '0.5rem 1rem',
-                      borderRadius: '9999px',
-                      fontSize: '0.875rem',
-                      fontWeight: 600
+                      height: '12rem',
+                      background: `url(${blog.featuredImage}) center/cover`,
+                      borderRadius: '1.5rem 1.5rem 0 0'
                     }}>
-                      📖 {blog.readTime} min read
+                      <div style={{
+                        position: 'absolute',
+                        bottom: '1rem',
+                        right: '1rem',
+                        background: 'rgba(0,0,0,0.7)',
+                        color: 'white',
+                        padding: '0.5rem 1rem',
+                        borderRadius: '9999px',
+                        fontSize: '0.875rem'
+                      }}>
+                        📖 {blog.readTime} min read
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                <div style={{ padding: '2rem' }}>
-                  {/* Category Badge */}
-                  <span style={{
-                    display: 'inline-block',
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                    color: 'white',
-                    padding: '0.25rem 0.75rem',
-                    borderRadius: '9999px',
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    marginBottom: '1rem'
-                  }}>
-                    {blog.category}
-                  </span>
-
-                  {/* Featured Badge */}
-                  {blog.featured && (
+                  <div style={{ padding: '2rem' }}>
                     <span style={{
                       display: 'inline-block',
-                      background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                       color: 'white',
                       padding: '0.25rem 0.75rem',
                       borderRadius: '9999px',
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      marginLeft: '0.5rem',
                       marginBottom: '1rem'
                     }}>
-                      ⭐ Featured
+                      {blog.category}
                     </span>
-                  )}
 
-                  {/* Title */}
-                  <h3 
-                    style={{
+                    <h3 style={{
                       fontSize: '1.5rem',
                       fontWeight: 700,
                       marginBottom: '1rem',
                       color: '#f8fafc',
-                      lineHeight: 1.4,
-                      cursor: 'pointer'
-                    }}
-                    onClick={() => handleViewBlog(blog)}
-                  >
-                    {blog.title}
-                  </h3>
-
-                  {/* Excerpt */}
-                  <p style={{
-                    color: '#cbd5e1',
-                    marginBottom: '1.5rem',
-                    lineHeight: 1.6,
-                    fontSize: '0.95rem'
-                  }}>
-                    {blog.excerpt}
-                  </p>
-
-                  {/* Tags */}
-                  {blog.tags && blog.tags.length > 0 && (
-                    <div style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: '0.5rem',
-                      marginBottom: '1.5rem'
+                      lineHeight: 1.4
                     }}>
-                      {blog.tags.slice(0, 3).map(tag => (
-                        <span
-                          key={tag}
-                          style={{
+                      {blog.title}
+                    </h3>
+
+                    <p style={{
+                      color: '#cbd5e1',
+                      marginBottom: '1.5rem',
+                      lineHeight: 1.6,
+                      fontSize: '0.95rem'
+                    }}>
+                      {blog.excerpt}
+                    </p>
+
+                    {blog.tags && blog.tags.length > 0 && (
+                      <div style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: '0.5rem',
+                        marginBottom: '1.5rem'
+                      }}>
+                        {blog.tags.slice(0, 3).map(tag => (
+                          <span key={tag} style={{
                             background: 'rgba(99, 102, 241, 0.1)',
                             color: '#a5b4fc',
                             padding: '0.25rem 0.75rem',
                             borderRadius: '9999px',
                             fontSize: '0.75rem',
-                            fontWeight: 500,
                             border: '1px solid rgba(99, 102, 241, 0.2)'
-                          }}
-                        >
-                          #{tag}
-                        </span>
-                      ))}
-                      {blog.tags.length > 3 && (
-                        <span style={{
-                          color: '#94a3b8',
-                          fontSize: '0.75rem',
-                          padding: '0.25rem 0.5rem'
-                        }}>
-                          +{blog.tags.length - 3} more
-                        </span>
-                      )}
-                    </div>
-                  )}
+                          }}>
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
 
-                  {/* Action Buttons */}
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: '1rem'
-                  }}>
                     <div style={{
                       display: 'flex',
-                      gap: '1rem',
+                      justifyContent: 'space-between',
                       alignItems: 'center'
                     }}>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleLikeBlog(blog.id)
-                        }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                          color: likedBlogs.has(blog.id) ? '#ef4444' : '#94a3b8',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          fontSize: '0.875rem'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!likedBlogs.has(blog.id)) {
-                            e.target.style.color = '#ef4444'
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!likedBlogs.has(blog.id)) {
-                            e.target.style.color = '#94a3b8'
-                          }
-                        }}
-                      >
-                        <Heart 
-                          size={16} 
-                          fill={likedBlogs.has(blog.id) ? 'currentColor' : 'none'} 
-                        />
-                        {blog.likes || 0}
-                      </button>
+                      <div style={{ display: 'flex', gap: '1rem' }}>
+                        <button
+                          onClick={(e) => handleLikeBlog(blog.id, e)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            color: isLiked ? '#ef4444' : '#94a3b8',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          <Heart size={16} fill={isLiked ? 'currentColor' : 'none'} />
+                          {blog.likes || 0}
+                        </button>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleShareWhatsApp(blog)
-                        }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                          color: '#94a3b8',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          fontSize: '0.875rem'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.target.style.color = '#25d366'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.target.style.color = '#94a3b8'
-                        }}
-                      >
-                        <Share size={16} />
-                        Share
-                      </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleShareWhatsApp(blog)
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem',
+                            color: '#94a3b8',
+                            cursor: 'pointer',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          <Share size={16} />
+                        </button>
+                      </div>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleViewBlog(blog)
-                        }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem',
-                          color: '#94a3b8',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          fontSize: '0.875rem'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.target.style.color = '#6366f1'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.target.style.color = '#94a3b8'
-                        }}
-                      >
-                        <MessageCircle size={16} />
-                        Comment
-                      </button>
-                    </div>
-
-                    <button
-                      onClick={() => handleViewBlog(blog)}
-                      style={{
-                        background: 'linear-gradient(135deg, #6366f1, #3730a3)',
-                        color: 'white',
-                        border: 'none',
-                        padding: '0.5rem 1rem',
-                        borderRadius: '9999px',
-                        fontSize: '0.875rem',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        transition: 'all 0.2s ease'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.target.style.transform = 'translateY(-1px)'
-                        e.target.style.boxShadow = '0 8px 20px rgba(99, 102, 241, 0.3)'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.target.style.transform = 'translateY(0)'
-                        e.target.style.boxShadow = 'none'
-                      }}
-                    >
-                      Read More
-                      <ExternalLink size={14} />
-                    </button>
-                  </div>
-
-                  {/* Meta Info */}
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    color: '#94a3b8',
-                    fontSize: '0.875rem',
-                    paddingTop: '1rem',
-                    borderTop: '1px solid rgba(255,255,255,0.1)'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <Calendar size={14} />
-                      {formatDate(blog.createdAt)}
-                    </div>
-                    <div style={{ display: 'flex', gap: '1rem' }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#94a3b8', fontSize: '0.875rem' }}>
                         <Eye size={14} /> {blog.views || 0}
-                      </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </article>
-            ))
+                </article>
+              )
+            })
           ) : (
             <div style={{
               gridColumn: '1 / -1',
@@ -957,15 +1060,12 @@ export default function Blog() {
                 No blogs found
               </h3>
               <p style={{ color: '#cbd5e1' }}>
-                {searchTerm || selectedCategory !== 'All' 
-                  ? 'Try adjusting your search or filter criteria' 
-                  : 'No published blogs available at the moment'}
+                Try adjusting your search or filter criteria
               </p>
             </div>
           )}
         </div>
 
-        {/* Results Summary */}
         {!loading && (
           <div style={{
             textAlign: 'center',
@@ -974,13 +1074,10 @@ export default function Blog() {
             fontSize: '0.875rem'
           }}>
             Showing {filteredBlogs.length} of {blogs.length} blog{blogs.length !== 1 ? 's' : ''}
-            {selectedCategory !== 'All' && ` in "${selectedCategory}"`}
-            {searchTerm && ` matching "${searchTerm}"`}
           </div>
         )}
       </div>
 
-      {/* Blog Modal */}
       {showBlogModal && selectedBlog && (
         <div style={{
           position: 'fixed',
@@ -993,18 +1090,17 @@ export default function Blog() {
           alignItems: 'center',
           justifyContent: 'center',
           zIndex: 1000,
-          padding: '1rem'
+          padding: '1rem',
+          overflowY: 'auto'
         }}>
           <div style={{
             ...glassCardStyle,
-            maxWidth: '800px',
+            maxWidth: '900px',
             width: '100%',
             maxHeight: '90vh',
             overflowY: 'auto',
-            padding: '0',
-            animation: 'slide-up 0.4s ease-out'
+            padding: '0'
           }}>
-            {/* Modal Header */}
             <div style={{
               padding: '2rem',
               borderBottom: '1px solid rgba(255,255,255,0.1)',
@@ -1017,22 +1113,19 @@ export default function Blog() {
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
-                alignItems: 'flex-start',
-                gap: '1rem'
+                alignItems: 'flex-start'
               }}>
-                <div style={{ flex: 1 }}>
+                <div>
                   <h2 style={{
                     fontSize: '1.75rem',
                     fontWeight: 700,
                     color: '#f8fafc',
-                    margin: '0 0 0.5rem 0',
-                    lineHeight: 1.3
+                    margin: '0 0 0.5rem 0'
                   }}>
                     {selectedBlog.title}
                   </h2>
                   <div style={{
                     display: 'flex',
-                    alignItems: 'center',
                     gap: '1rem',
                     fontSize: '0.875rem',
                     color: '#94a3b8'
@@ -1040,8 +1133,6 @@ export default function Blog() {
                     <span>{formatDate(selectedBlog.createdAt)}</span>
                     <span>•</span>
                     <span>{selectedBlog.readTime} min read</span>
-                    <span>•</span>
-                    <span>{selectedBlog.category}</span>
                   </div>
                 </div>
                 <button
@@ -1055,17 +1146,7 @@ export default function Blog() {
                     color: '#94a3b8',
                     fontSize: '1.5rem',
                     cursor: 'pointer',
-                    padding: '0.5rem',
-                    borderRadius: '0.5rem',
-                    transition: 'all 0.2s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.color = '#f8fafc'
-                    e.target.style.background = 'rgba(255,255,255,0.1)'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.color = '#94a3b8'
-                    e.target.style.background = 'none'
+                    padding: '0.5rem'
                   }}
                 >
                   ✕
@@ -1073,24 +1154,14 @@ export default function Blog() {
               </div>
             </div>
 
-            {/* Featured Image */}
             {selectedBlog.featuredImage && (
               <div style={{
                 height: '300px',
-                background: `url(${selectedBlog.featuredImage}) center/cover`,
-                position: 'relative'
-              }}>
-                <div style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'linear-gradient(to top, rgba(0,0,0,0.3), transparent)'
-                }} />
-              </div>
+                background: `url(${selectedBlog.featuredImage}) center/cover`
+              }} />
             )}
 
-            {/* Blog Content */}
             <div style={{ padding: '2rem' }}>
-              {/* Action Buttons */}
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -1098,46 +1169,31 @@ export default function Blog() {
                 marginBottom: '2rem',
                 padding: '1rem',
                 background: 'rgba(255,255,255,0.05)',
-                borderRadius: '1rem',
-                border: '1px solid rgba(255,255,255,0.1)'
+                borderRadius: '1rem'
               }}>
-                <div style={{
-                  display: 'flex',
-                  gap: '1.5rem',
-                  alignItems: 'center'
-                }}>
+                <div style={{ display: 'flex', gap: '1rem' }}>
                   <button
-                    onClick={() => handleLikeBlog(selectedBlog.id)}
+                    onClick={(e) => handleLikeBlog(selectedBlog.id, e)}
                     style={{
-                      background: likedBlogs.has(selectedBlog.id) 
+                      background: selectedBlog.likedBy?.includes(user.uid) 
                         ? 'rgba(239, 68, 68, 0.1)' 
                         : 'rgba(255,255,255,0.05)',
-                      border: `1px solid ${likedBlogs.has(selectedBlog.id) ? '#ef4444' : 'rgba(255,255,255,0.2)'}`,
+                      border: `1px solid ${selectedBlog.likedBy?.includes(user.uid) ? '#ef4444' : 'rgba(255,255,255,0.2)'}`,
                       borderRadius: '9999px',
                       padding: '0.75rem 1.5rem',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '0.5rem',
-                      color: likedBlogs.has(selectedBlog.id) ? '#ef4444' : '#cbd5e1',
+                      color: selectedBlog.likedBy?.includes(user.uid) ? '#ef4444' : '#cbd5e1',
                       cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      fontSize: '0.875rem',
-                      fontWeight: 600
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.transform = 'translateY(-1px)'
-                      e.target.style.boxShadow = '0 8px 20px rgba(239, 68, 68, 0.2)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.transform = 'translateY(0)'
-                      e.target.style.boxShadow = 'none'
+                      fontSize: '0.875rem'
                     }}
                   >
                     <Heart 
                       size={16} 
-                      fill={likedBlogs.has(selectedBlog.id) ? 'currentColor' : 'none'} 
+                      fill={selectedBlog.likedBy?.includes(user.uid) ? 'currentColor' : 'none'} 
                     />
-                    {likedBlogs.has(selectedBlog.id) ? 'Liked' : 'Like'} ({selectedBlog.likes || 0})
+                    {selectedBlog.likedBy?.includes(user.uid) ? 'Liked' : 'Like'} ({selectedBlog.likes || 0})
                   </button>
 
                   <button
@@ -1152,21 +1208,11 @@ export default function Blog() {
                       gap: '0.5rem',
                       color: '#25d366',
                       cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      fontSize: '0.875rem',
-                      fontWeight: 600
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.transform = 'translateY(-1px)'
-                      e.target.style.boxShadow = '0 8px 20px rgba(37, 211, 102, 0.2)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.transform = 'translateY(0)'
-                      e.target.style.boxShadow = 'none'
+                      fontSize: '0.875rem'
                     }}
                   >
                     <Share size={16} />
-                    Share on WhatsApp
+                    Share
                   </button>
                 </div>
 
@@ -1182,7 +1228,6 @@ export default function Blog() {
                 </div>
               </div>
 
-              {/* Blog Content */}
               <div style={{
                 color: '#e2e8f0',
                 lineHeight: 1.7,
@@ -1190,50 +1235,30 @@ export default function Blog() {
                 marginBottom: '3rem'
               }}>
                 {selectedBlog.content.split('\n').map((paragraph, index) => (
-                  <p key={index} style={{ 
-                    marginBottom: '1.5rem',
-                    textAlign: 'justify'
-                  }}>
+                  <p key={index} style={{ marginBottom: '1.5rem' }}>
                     {paragraph}
                   </p>
                 ))}
               </div>
 
-              {/* Tags */}
               {selectedBlog.tags && selectedBlog.tags.length > 0 && (
                 <div style={{
                   marginBottom: '2rem',
                   padding: '1.5rem',
                   background: 'rgba(255,255,255,0.05)',
-                  borderRadius: '1rem',
-                  border: '1px solid rgba(255,255,255,0.1)'
+                  borderRadius: '1rem'
                 }}>
-                  <h4 style={{
-                    color: '#6366f1',
-                    fontSize: '1rem',
-                    fontWeight: 600,
-                    marginBottom: '1rem'
-                  }}>
-                    Tags
-                  </h4>
-                  <div style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '0.75rem'
-                  }}>
+                  <h4 style={{ color: '#6366f1', marginBottom: '1rem' }}>Tags</h4>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
                     {selectedBlog.tags.map(tag => (
-                      <span
-                        key={tag}
-                        style={{
-                          background: 'rgba(99, 102, 241, 0.1)',
-                          color: '#a5b4fc',
-                          padding: '0.5rem 1rem',
-                          borderRadius: '9999px',
-                          fontSize: '0.875rem',
-                          fontWeight: 500,
-                          border: '1px solid rgba(99, 102, 241, 0.2)'
-                        }}
-                      >
+                      <span key={tag} style={{
+                        background: 'rgba(99, 102, 241, 0.1)',
+                        color: '#a5b4fc',
+                        padding: '0.5rem 1rem',
+                        borderRadius: '9999px',
+                        fontSize: '0.875rem',
+                        border: '1px solid rgba(99, 102, 241, 0.2)'
+                      }}>
                         #{tag}
                       </span>
                     ))}
@@ -1241,7 +1266,6 @@ export default function Blog() {
                 </div>
               )}
 
-              {/* Comments Section */}
               <div style={{
                 borderTop: '1px solid rgba(255,255,255,0.1)',
                 paddingTop: '2rem'
@@ -1259,18 +1283,16 @@ export default function Blog() {
                   Comments ({comments[selectedBlog.id]?.length || 0})
                 </h4>
 
-                {/* Add Comment */}
                 <div style={{
                   marginBottom: '2rem',
                   padding: '1.5rem',
                   background: 'rgba(255,255,255,0.05)',
-                  borderRadius: '1rem',
-                  border: '1px solid rgba(255,255,255,0.1)'
+                  borderRadius: '1rem'
                 }}>
                   <textarea
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
-                    placeholder="Share your thoughts about this blog post..."
+                    placeholder="Share your thoughts..."
                     style={{
                       width: '100%',
                       minHeight: '100px',
@@ -1287,7 +1309,7 @@ export default function Blog() {
                     }}
                   />
                   <button
-                    onClick={() => handleAddComment(selectedBlog.id)}
+                    onClick={handleAddComment}
                     disabled={!newComment.trim()}
                     style={{
                       background: !newComment.trim() 
@@ -1298,12 +1320,10 @@ export default function Blog() {
                       padding: '0.75rem 1.5rem',
                       borderRadius: '9999px',
                       fontSize: '0.875rem',
-                      fontWeight: 600,
                       cursor: !newComment.trim() ? 'not-allowed' : 'pointer',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '0.5rem',
-                      transition: 'all 0.2s ease'
+                      gap: '0.5rem'
                     }}
                   >
                     <Send size={14} />
@@ -1311,68 +1331,13 @@ export default function Blog() {
                   </button>
                 </div>
 
-                {/* Comments List */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   {comments[selectedBlog.id]?.length > 0 ? (
-                    comments[selectedBlog.id].map(comment => (
-                      <div
-                        key={comment.id}
-                        style={{
-                          padding: '1.5rem',
-                          background: 'rgba(255,255,255,0.05)',
-                          borderRadius: '1rem',
-                          border: '1px solid rgba(255,255,255,0.1)'
-                        }}
-                      >
-                        <div style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'flex-start',
-                          marginBottom: '0.75rem'
-                        }}>
-                          <div>
-                            <h5 style={{
-                              color: '#6366f1',
-                              fontSize: '0.875rem',
-                              fontWeight: 600,
-                              margin: 0
-                            }}>
-                              {comment.author}
-                            </h5>
-                            <p style={{
-                              color: '#94a3b8',
-                              fontSize: '0.75rem',
-                              margin: '0.25rem 0 0 0'
-                            }}>
-                              {new Date(comment.createdAt).toLocaleString()}
-                            </p>
-                          </div>
-                          <button
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: '#94a3b8',
-                              cursor: 'pointer',
-                              padding: '0.25rem',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '0.25rem',
-                              fontSize: '0.75rem'
-                            }}
-                          >
-                            <ThumbsUp size={12} />
-                            {comment.likes}
-                          </button>
-                        </div>
-                        <p style={{
-                          color: '#e2e8f0',
-                          lineHeight: 1.6,
-                          margin: 0
-                        }}>
-                          {comment.text}
-                        </p>
-                      </div>
-                    ))
+                    comments[selectedBlog.id]
+                      .filter(c => !c.parentId)
+                      .map(comment => (
+                        <CommentItem key={comment.id} comment={comment} />
+                      ))
                   ) : (
                     <div style={{
                       textAlign: 'center',
@@ -1390,23 +1355,18 @@ export default function Blog() {
         </div>
       )}
 
-      {/* Auth Modal */}
       <GoogleAuthModal
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
         onAuthSuccess={handleAuthSuccess}
       />
+<style>{`
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+`}</style>
 
-      <style jsx>{`
-        @keyframes slide-up {
-          from { transform: translateY(30px); opacity: 0; }
-          to { transform: translateY(0); opacity: 1; }
-        }
-        @keyframes spin {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   )
 }

@@ -38,6 +38,6 @@ export const db = getFirestore(app)
 export const auth = getAuth(app)
 
 // Log successful initialization (remove in production)
-console.log('Firebase initialized successfully')
+// console.log('Firebase initialized successfully')
 
 export default app

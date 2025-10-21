@@ -79,11 +79,20 @@ const UserProfile = ({ user, services, onLogout, onClose }) => {
                 <img 
                   src={user.photoURL} 
                   alt={user.name}
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
                   style={{
                     width: '100%',
                     height: '100%',
                     objectFit: 'cover',
                     borderRadius: '14px'
+                  }}
+                  onError={(e) => {
+                    console.error('Error loading profile image in UserProfile:', user.photoURL);
+                    e.target.style.display = 'none';
+                    const parent = e.target.parentElement;
+                    parent.style.background = 'linear-gradient(135deg, #ffffff20, #ffffff10)';
+                    parent.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>';
                   }}
                 />
               ) : (

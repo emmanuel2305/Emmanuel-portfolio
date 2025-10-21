@@ -67,10 +67,20 @@ export default function Navbar() {
       
       if (firebaseUser) {
         try {
+          // Force refresh the user's ID token to get latest data
+          await firebaseUser.reload()
+          
           const userDoc = await getUserByEmail(firebaseUser.email)
           
           if (userDoc) {
-            setUser(userDoc)
+            // Merge Firebase Auth data with Firestore data to ensure photoURL is present
+            const mergedUser = {
+              ...userDoc,
+              photoURL: userDoc.photoURL || firebaseUser.photoURL,
+              displayName: userDoc.name || firebaseUser.displayName
+            }
+            // console.log('User data loaded:', mergedUser) // Debug log
+            setUser(mergedUser)
             const services = await getServiceBookings(userDoc.uid)
             setUserServices(services)
           } else {
@@ -95,11 +105,19 @@ export default function Navbar() {
   }, [])
 
   const handleAuthSuccess = useCallback(async (userData) => {
-    setUser(userData)
+    // Ensure we have the latest photoURL from Firebase Auth if available
+    const currentUser = auth.currentUser
+    const mergedUserData = {
+      ...userData,
+      photoURL: userData.photoURL || currentUser?.photoURL || null
+    }
+    
+    console.log('Auth success - merged user data:', mergedUserData) // Debug log
+    setUser(mergedUserData)
     setShowAuth(false)
     
     try {
-      const services = await getServiceBookings(userData.uid)
+      const services = await getServiceBookings(mergedUserData.uid)
       setUserServices(services)
     } catch (error) {
       console.error('Error loading user services:', error)
@@ -169,11 +187,18 @@ export default function Navbar() {
           <img 
             src={user.photoURL} 
             alt={user.name}
+            referrerPolicy="no-referrer"
+            crossOrigin="anonymous"
             style={{
-              width: '36px',
-              height: '36px',
+              width: '40px',
+              height: '40px',
               borderRadius: '50%',
               objectFit: 'cover'
+            }}
+            onError={(e) => {
+              console.error('Error loading profile image:', user.photoURL)
+              e.target.style.display = 'none'
+              e.target.parentElement.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>`
             }}
           />
         ) : (
@@ -264,76 +289,75 @@ export default function Navbar() {
 
   if (!isMobile) {
     // Desktop Navbar
-// Desktop Navbar
-return (
-  <>
-    <nav style={{
-      position: "fixed",
-      top: "1.5rem",
-      left: "50%",
-      transform: `translateX(-50%) translateY(${isVisible ? "0" : "-100px"})`,
-      zIndex: 52,
-      opacity: isVisible ? 1 : 0,
-      transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-      // Remove the width calculation, let content determine width
-    }}>
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "1.5rem", // Consistent spacing
-        background: "rgba(255,255,255,0.95)",
-        backdropFilter: "blur(10px)",
-        padding: "0.75rem 2rem",
-        borderRadius: "9999px",
-        boxShadow: "0 8px 25px rgba(0,0,0,0.2)",
-        transition: "all 0.3s ease",
-        border: "1px solid rgba(255,255,255,0.3)",
-        width: "fit-content", // KEY CHANGE: Let content determine width
-        margin: "0 auto"
-      }}>
-        {/* Left Side Links */}
-        <Link style={getLinkStyle("/")} to="/">Home</Link>
-        <Link style={getLinkStyle("/about")} to="/about">About</Link>
-        <Link style={getLinkStyle("/services")} to="/services">Services</Link>
+    return (
+      <>
+        <nav style={{
+          position: "fixed",
+          top: "1.5rem",
+          left: "50%",
+          transform: `translateX(-50%) translateY(${isVisible ? "0" : "-100px"})`,
+          zIndex: 52,
+          opacity: isVisible ? 1 : 0,
+          transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "1.5rem",
+            background: "rgba(255,255,255,0.95)",
+            backdropFilter: "blur(10px)",
+            padding: "0.75rem 2rem",
+            borderRadius: "9999px",
+            boxShadow: "0 8px 25px rgba(0,0,0,0.2)",
+            transition: "all 0.3s ease",
+            border: "1px solid rgba(255,255,255,0.3)",
+            width: "fit-content",
+            margin: "0 auto"
+          }}>
+            {/* Left Side Links */}
+            <Link style={getLinkStyle("/")} to="/">Home</Link>
+            <Link style={getLinkStyle("/about")} to="/about">About</Link>
+            <Link style={getLinkStyle("/services")} to="/services">Services</Link>
 
-        {/* Center - User Profile */}
-        <div style={{ position: "relative" }}>
-          <UserCircle onClick={() => user ? setShowProfile(!showProfile) : setShowAuth(true)} />
-          
-          {showProfile && user && (
-            <div style={{ 
-              position: "absolute", 
-              top: "100%", 
-              left: "50%", 
-              transform: "translateX(-50%)", 
-              marginTop: "8px" 
-            }}>
-              <UserProfile
-                user={user}
-                services={userServices}
-                onLogout={handleLogout}
-                onClose={() => setShowProfile(false)}
-              />
+            {/* Center - User Profile */}
+            <div style={{ position: "relative" }}>
+              <UserCircle onClick={() => user ? setShowProfile(!showProfile) : setShowAuth(true)} />
+              
+              {showProfile && user && (
+                <div style={{ 
+                  position: "absolute", 
+                  top: "100%", 
+                  left: "50%", 
+                  transform: "translateX(-50%)", 
+                  marginTop: "8px" 
+                }}>
+                  <UserProfile
+                    user={user}
+                    services={userServices}
+                    onLogout={handleLogout}
+                    onClose={() => setShowProfile(false)}
+                  />
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Right Side Links */}
-        <Link style={getLinkStyle("/projects")} to="/projects">Projects</Link>
-        <Link style={getLinkStyle("/blog")} to="/blog">Blog</Link>
-        <Link style={getLinkStyle("/contact")} to="/contact">Contact</Link>
-      </div>
-    </nav>
+            {/* Right Side Links */}
+            <Link style={getLinkStyle("/projects")} to="/projects">Projects</Link>
+            <Link style={getLinkStyle("/blog")} to="/blog">Blog</Link>
+            <Link style={getLinkStyle("/contact")} to="/contact">Contact</Link>
+          </div>
+        </nav>
 
-    <GoogleAuthModal
-      isOpen={showAuth}
-      onClose={() => setShowAuth(false)}
-      onAuthSuccess={handleAuthSuccess}
-    />
-  </>
-)}
+        <GoogleAuthModal
+          isOpen={showAuth}
+          onClose={() => setShowAuth(false)}
+          onAuthSuccess={handleAuthSuccess}
+        />
+      </>
+    )
+  }
+
   // Mobile Navbar
- // Mobile Navbar
   return (
     <>
       <nav style={{

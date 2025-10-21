@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { addBlog, getBlogs, updateBlog, deleteBlog } from '../services/firebaseService'
+import { addBlog, getBlogs, updateBlog, deleteBlog, compressImageToBase64 } from '../services/firebaseService'
 
 export default function AddBlog() {
   const navigate = useNavigate()
   const [showElements, setShowElements] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [activeTab, setActiveTab] = useState('add') // 'add' or 'manage'
+  const [isCompressing, setIsCompressing] = useState(false)
+  const [activeTab, setActiveTab] = useState('add')
   const [existingBlogs, setExistingBlogs] = useState([])
   const [filteredBlogs, setFilteredBlogs] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
@@ -71,7 +72,6 @@ export default function AddBlog() {
   const filterBlogs = () => {
     let filtered = existingBlogs
 
-    // Filter by status
     if (statusFilter === 'published') {
       filtered = filtered.filter(blog => blog.published === true)
     } else if (statusFilter === 'draft') {
@@ -80,7 +80,6 @@ export default function AddBlog() {
       filtered = filtered.filter(blog => blog.featured === true)
     }
 
-    // Filter by search term
     if (searchTerm) {
       const searchLower = searchTerm.toLowerCase()
       filtered = filtered.filter(blog =>
@@ -142,7 +141,7 @@ export default function AddBlog() {
     }
   }
 
-  const handleImageUpload = (e) => {
+  const handleImageUpload = async (e) => {
     const file = e.target.files[0]
     if (file) {
       if (!file.type.startsWith('image/')) {
@@ -150,21 +149,37 @@ export default function AddBlog() {
         return
       }
 
-      if (file.size > 5 * 1024 * 1024) {
-        alert('Image size should be less than 5MB')
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image size should be less than 10MB')
         return
       }
 
-      const reader = new FileReader()
-      reader.onload = (e) => {
+      try {
+        setIsCompressing(true)
         setFormData(prev => ({
           ...prev,
           imageFile: file,
-          imageData: e.target.result,
+          imageData: null,
           imageUrl: ''
         }))
+
+        // Compress the image to under 800KB
+        const compressedDataUrl = await compressImageToBase64(file, 800)
+        
+        setFormData(prev => ({
+          ...prev,
+          imageFile: file,
+          imageData: compressedDataUrl,
+          imageUrl: ''
+        }))
+        
+        setIsCompressing(false)
+      } catch (error) {
+        console.error('Error compressing image:', error)
+        alert(error.message || 'Failed to process image. Please try a smaller image.')
+        removeImage()
+        setIsCompressing(false)
       }
-      reader.readAsDataURL(file)
     }
   }
 
@@ -254,8 +269,7 @@ export default function AddBlog() {
         published: formData.published,
         readTime: formData.readTime,
         slug: formData.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
-        featuredImage: formData.imageData || formData.imageUrl || null,
-        imageType: formData.imageFile ? formData.imageFile.type : (formData.imageUrl ? 'url' : null)
+        featuredImage: formData.imageData || formData.imageUrl || null
       }
 
       if (editingBlog) {
@@ -544,18 +558,25 @@ export default function AddBlog() {
                 <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', alignItems: 'flex-end' }}>
                   <div style={{ flex: 1 }}>
                     <label style={{ ...labelStyle, fontSize: '0.875rem', color: '#94a3b8' }}>
-                      Upload Image File
+                      Upload Image File (will be auto-compressed)
                     </label>
                     <input
                       type="file"
                       accept="image/*"
                       onChange={handleImageUpload}
+                      disabled={isCompressing}
                       style={{
                         ...inputStyle,
                         padding: '0.75rem',
-                        cursor: 'pointer'
+                        cursor: isCompressing ? 'not-allowed' : 'pointer',
+                        opacity: isCompressing ? 0.5 : 1
                       }}
                     />
+                    {isCompressing && (
+                      <p style={{ color: '#60a5fa', fontSize: '0.875rem', marginTop: '0.5rem' }}>
+                        🔄 Compressing image...
+                      </p>
+                    )}
                   </div>
                   <div style={{ 
                     display: 'flex', 
@@ -578,6 +599,7 @@ export default function AddBlog() {
                       name="imageUrl"
                       value={formData.imageUrl}
                       onChange={handleInputChange}
+                      disabled={isCompressing}
                       style={inputStyle}
                       placeholder="https://example.com/image.jpg"
                       onFocus={(e) => e.target.style.borderColor = '#ef4444'}
@@ -644,13 +666,16 @@ export default function AddBlog() {
                     }}>
                       Failed to load image
                     </div>
-                    {formData.imageFile && (
+                    {formData.imageFile && formData.imageData && (
                       <div style={{ 
                         marginTop: '0.5rem', 
                         fontSize: '0.75rem', 
                         color: '#94a3b8' 
                       }}>
-                        File: {formData.imageFile.name} ({(formData.imageFile.size / 1024 / 1024).toFixed(2)} MB)
+                        File: {formData.imageFile.name} 
+                        <span style={{ color: '#4ade80', marginLeft: '0.5rem' }}>
+                          (Compressed to {(formData.imageData.length / 1024).toFixed(2)} KB)
+                        </span>
                       </div>
                     )}
                   </div>
@@ -849,7 +874,7 @@ export default function AddBlog() {
                     navigate('/admin')
                   }
                 }}
-                disabled={isSubmitting}
+                disabled={isSubmitting || isCompressing}
                 style={{
                   padding: '1rem 2rem',
                   borderRadius: '0.75rem',
@@ -858,9 +883,9 @@ export default function AddBlog() {
                   color: '#e2e8f0',
                   fontSize: '1rem',
                   fontWeight: 600,
-                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  cursor: (isSubmitting || isCompressing) ? 'not-allowed' : 'pointer',
                   transition: 'all 0.3s ease',
-                  opacity: isSubmitting ? 0.7 : 1
+                  opacity: (isSubmitting || isCompressing) ? 0.7 : 1
                 }}
               >
                 {editingBlog ? 'Cancel Edit' : 'Cancel'}
@@ -868,18 +893,18 @@ export default function AddBlog() {
               
               <button
                 type="submit"
-                disabled={isSubmitting || !formData.title || !formData.excerpt || !formData.content}
+                disabled={isSubmitting || isCompressing || !formData.title || !formData.excerpt || !formData.content}
                 style={{
                   padding: '1rem 2rem',
                   borderRadius: '0.75rem',
                   border: 'none',
-                  background: isSubmitting || !formData.title || !formData.excerpt || !formData.content
+                  background: (isSubmitting || isCompressing || !formData.title || !formData.excerpt || !formData.content)
                     ? 'rgba(107, 114, 128, 0.5)'
                     : 'linear-gradient(135deg, #ef4444, #b91c1c)',
                   color: 'white',
                   fontSize: '1rem',
                   fontWeight: 700,
-                  cursor: isSubmitting || !formData.title || !formData.excerpt || !formData.content ? 'not-allowed' : 'pointer',
+                  cursor: (isSubmitting || isCompressing || !formData.title || !formData.excerpt || !formData.content) ? 'not-allowed' : 'pointer',
                   transition: 'all 0.3s ease',
                   boxShadow: '0 10px 25px rgba(239, 68, 68, 0.3)'
                 }}

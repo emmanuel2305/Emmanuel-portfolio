@@ -499,28 +499,30 @@ export default function About() {
           }}>
             Ready to build something amazing together?
           </p>
-          <button style={{
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            color: 'white',
-            padding: '1rem 2.5rem',
-            borderRadius: '9999px',
-            fontWeight: 'bold',
-            fontSize: '1.125rem',
-            border: 'none',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease',
-            boxShadow: '0 10px 25px rgba(102, 126, 234, 0.3)'
-          }}
-          onMouseEnter={(e) => {
-            e.target.style.transform = 'translateY(-2px) scale(1.05)'
-            e.target.style.boxShadow = '0 20px 40px rgba(102, 126, 234, 0.4)'
-          }}
-          onMouseLeave={(e) => {
-            e.target.style.transform = 'translateY(0) scale(1)'
-            e.target.style.boxShadow = '0 10px 25px rgba(102, 126, 234, 0.3)'
-          }}>
-            Let's Connect! 🤝
-          </button>
+        <button 
+  onClick={() => window.location.href = '/contact'}
+  style={{
+    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    color: 'white',
+    padding: '1rem 2.5rem',
+    borderRadius: '9999px',
+    fontWeight: 'bold',
+    fontSize: '1.125rem',
+    border: 'none',
+    cursor: 'pointer',
+    transition: 'all 0.3s ease',
+    boxShadow: '0 10px 25px rgba(102, 126, 234, 0.3)'
+  }}
+  onMouseEnter={(e) => {
+    e.target.style.transform = 'translateY(-2px) scale(1.05)'
+    e.target.style.boxShadow = '0 20px 40px rgba(102, 126, 234, 0.4)'
+  }}
+  onMouseLeave={(e) => {
+    e.target.style.transform = 'translateY(0) scale(1)'
+    e.target.style.boxShadow = '0 10px 25px rgba(102, 126, 234, 0.3)'
+  }}>
+  Let's Connect! 🤝
+</button>
         </div>
       </div>
     </div>
