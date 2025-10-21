@@ -1081,7 +1081,7 @@ export default function Services() {
                   <label style={{ 
                     display: 'block', 
                     marginBottom: '0.5rem', 
-                    color: '#cbd5e1',
+                    color: '#f1ececff',
                     fontWeight: 600,
                     fontSize: '0.875rem'
                   }}>
@@ -1098,7 +1098,7 @@ export default function Services() {
                       borderRadius: '0.75rem',
                       border: '1px solid rgba(255,255,255,0.2)',
                       background: 'rgba(255,255,255,0.05)',
-                      color: '#f8fafc',
+                      color: '#4a4a4dff',
                       fontSize: '1rem',
                       transition: 'all 0.2s ease',
                       outline: 'none',
@@ -1143,7 +1143,7 @@ export default function Services() {
                       borderRadius: '0.75rem',
                       border: '1px solid rgba(255,255,255,0.2)',
                       background: 'rgba(255,255,255,0.05)',
-                      color: '#f8fafc',
+                      color: '#656668ff',
                       fontSize: '1rem',
                       transition: 'all 0.2s ease',
                       outline: 'none',
